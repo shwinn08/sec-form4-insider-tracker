@@ -1,0 +1,14 @@
+# One ticker per line. Blank lines and #-comments are ignored.
+# Swap these for whatever you actually want to track.
+
+AAPL
+MSFT
+NVDA
+TSLA
+JPM
+WMT
+XOM
+FWONK
+PFE
+RACE 
+GT

@@ -1,0 +1,5 @@
+# Runtime dependencies for the SEC Form 4 scraper.
+# Deliberately minimal: everything else (json, csv, datetime) is in the stdlib.
+
+requests==2.32.3        # HTTP client
+python-dotenv==1.0.1    # loads SEC_USER_AGENT from a local .env file

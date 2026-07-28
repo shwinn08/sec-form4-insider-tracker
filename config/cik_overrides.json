@@ -1,0 +1,14 @@
+{
+  "_comment": [
+    "Pin a ticker to a specific CIK, bypassing SEC's company_tickers.json.",
+    "Needed because a ticker's CIK is not stable over time: after a merger,",
+    "reincorporation, or holding-company reorganization, the ticker moves to a",
+    "NEW registrant while all the filing history stays under the predecessor.",
+    "company_tickers.json only ever reflects the current registrant.",
+    "Keys are tickers, values are CIKs as integers (unpadded). Keys starting",
+    "with an underscore are ignored."
+  ],
+
+  "_XOM": "ExxonMobil reorganized under a new holdco (CIK 2115436) in July 2026. That entity has no Form 4 history; 34088 is the operating predecessor. Remove this override once the new holdco accumulates its own insider filings.",
+  "XOM": 34088
+}
