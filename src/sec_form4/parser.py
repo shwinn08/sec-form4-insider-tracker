@@ -184,6 +184,7 @@ class Holding:
     would appear as a phantom zero-share trade if merged."""
 
     accession_number: str
+    holding_number: int         # ordinal within the filing — natural key with accession
     searched_ticker: str
     issuer_cik: int
     issuer_name: str
@@ -198,8 +199,56 @@ class Holding:
     footnote_ids: str
 
 
+@dataclass(frozen=True)
+class FilingRecord:
+    """Filing-level facts, emitted once per document.
+
+    A filing is a first-class entity, not something to be inferred from its
+    transaction rows: two filings in this corpus report a holding and no
+    transaction at all, so deriving filings from transactions loses them.
+    """
+
+    accession_number: str
+    searched_ticker: str
+    searched_cik: int
+    filer_agent_cik: int
+    filing_date: str
+    period_of_report: str
+    document_type: str
+    schema_version: str
+    not_subject_to_section16: bool
+    raw_xml_url: str
+    issuer_cik: int
+    issuer_name: str
+    issuer_matches_searched: bool
+    num_reporting_owners: int
+
+
+@dataclass(frozen=True)
+class FilingOwner:
+    """One (filing, owner) pair with that owner's roles on that filing.
+
+    Emitted per owner rather than folded into the transaction rows, so
+    secondary owners on joint filings keep their own role flags instead of
+    being reduced to a name in a joined string.
+    """
+
+    accession_number: str
+    owner_order: int
+    owner_cik: str
+    owner_name: str
+    is_director: bool
+    is_officer: bool
+    is_ten_percent_owner: bool
+    is_other: bool
+    officer_title: str
+    other_text: str
+
+
 @dataclass
 class ParseResult:
+    filing: FilingRecord | None = None
+    owners: list[FilingOwner] = field(default_factory=list)
     transactions: list[Transaction] = field(default_factory=list)
     holdings: list[Holding] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
@@ -305,6 +354,39 @@ def parse_form4(xml_text: str, enum_row: dict) -> ParseResult:
     primary = owners[0]
     roster = "; ".join(f"{o.rpt_owner_name} ({o.rpt_owner_cik})" for o in owners)
 
+    result.filing = FilingRecord(
+        accession_number=accession,
+        searched_ticker=enum_row["ticker"],
+        searched_cik=searched_cik,
+        filer_agent_cik=common["filer_agent_cik"],
+        filing_date=enum_row["filing_date"],
+        period_of_report=common["period_of_report"],
+        document_type=common["document_type"],
+        schema_version=common["schema_version"],
+        not_subject_to_section16=common["not_subject_to_section16"],
+        raw_xml_url=enum_row["raw_xml_url"],
+        issuer_cik=issuer_cik,
+        issuer_name=common["issuer_name"],
+        issuer_matches_searched=matches,
+        num_reporting_owners=len(owners),
+    )
+    result.owners = [
+        FilingOwner(
+            accession_number=accession,
+            owner_order=i,
+            owner_cik=o.rpt_owner_cik,
+            owner_name=o.rpt_owner_name,
+            is_director=o.is_director,
+            is_officer=o.is_officer,
+            is_ten_percent_owner=o.is_ten_percent_owner,
+            is_other=o.is_other,
+            officer_title=o.officer_title,
+            other_text=o.other_text,
+        )
+        for i, o in enumerate(owners, start=1)
+        if o.rpt_owner_cik
+    ]
+
     owner_fields = {
         "rpt_owner_cik": primary.rpt_owner_cik,
         "rpt_owner_name": primary.rpt_owner_name,
@@ -325,6 +407,7 @@ def parse_form4(xml_text: str, enum_row: dict) -> ParseResult:
     # separate tranches or price points, not duplicates. Without an ordinal
     # there is no key that distinguishes them.
     line_number = 0
+    holding_number = 0
 
     for table_name, txn_tag, hold_tag in (
         ("non-derivative", "nonDerivativeTransaction", "nonDerivativeHolding"),
@@ -397,9 +480,11 @@ def parse_form4(xml_text: str, enum_row: dict) -> ParseResult:
             )
 
         for node in table_el.findall(hold_tag):
+            holding_number += 1
             result.holdings.append(
                 Holding(
                     accession_number=accession,
+                    holding_number=holding_number,
                     searched_ticker=enum_row["ticker"],
                     issuer_cik=issuer_cik,
                     issuer_name=common["issuer_name"],

@@ -27,8 +27,8 @@ rather than throwing an error.
 |---|---|
 | 1. Enumerate filings | Complete |
 | 2. Fetch + parse XML | Complete |
-| 3. SQLite schema + load | In progress |
-| 4. Analysis / reporting | Not started |
+| 3. SQLite schema + load | Complete |
+| 4. Analysis / reporting | In progress |
 
 Current corpus: **11 tickers, 854 filings, 1,998 transactions** over a 12-month
 window. All figures quoted in this README are measured from that corpus, not
@@ -105,6 +105,12 @@ python scripts/01_enumerate_filings.py
 
 # Stage 2 — download and parse those filings     -> data/processed/
 python scripts/02_parse_filings.py
+
+# Stage 3 — build SQLite and load                -> data/form4.db
+python scripts/03_load_database.py --rebuild
+
+# Stage 4 — example analytical queries
+python scripts/04_example_queries.py
 ```
 
 Useful flags:
@@ -441,6 +447,86 @@ resigned. One states so in its remarks.
 
 ---
 
+## 11. Security titles are free text, and spelled inconsistently
+
+Found by querying the loaded database rather than by parsing. `security_title`
+is the only *reliable* identifier of a traded instrument (finding 2), but it is
+not a *clean* one — different filing agents spell the same security differently
+for the same issuer:
+
+| Issuer | Title as filed | Transactions |
+|---|---|---|
+| NVIDIA | `Common Stock` | 413 |
+| NVIDIA | `Common` | 153 |
+| Walmart | `Common` | 289 |
+| Walmart | `Common Stock` | 2 |
+| Sky Quarry | `Common Stock, par value $0.0001` | 1 |
+
+The `securities` table therefore splits one real security across several rows,
+and per-security aggregates undercount.
+
+This is **deliberately not auto-normalised.** Collapsing `Common` into
+`Common Stock` is safe, but the same rule applied to Liberty Media would merge
+`Series C Common Stock` with `Series C Liberty Live Common Stock` — genuinely
+different securities. A string heuristic that silently merges distinct
+instruments is worse than the duplication it fixes. The correct solution is a
+curated alias table mapping filed titles to canonical securities per issuer,
+which is listed under "what I'd add next".
+
+---
+
+# The database
+
+Stage 3 loads everything into SQLite (`data/form4.db`, ~900 KB).
+
+| Table | Rows | Purpose |
+|---|---|---|
+| `companies` | 24 | Issuers, keyed by CIK (never by ticker) |
+| `filings` | 854 | One row per Form 4 document |
+| `reporting_owners` | 192 | The insiders |
+| `filing_owners` | 866 | Many-to-many, with per-filing roles |
+| `securities` | 57 | `(issuer_cik, security_title)` |
+| `transaction_codes` | 19 | Lookup, with `is_open_market` |
+| `transactions` | 1,998 | One row per transaction line |
+| `holdings` | 807 | Positions with no transaction |
+
+Plus two views: `v_transactions` (casts decimals, exposes `signed_shares` and
+`transaction_value`) and `v_current_positions` (the correct read of
+`shares_owned_following`).
+
+### How the schema encodes each finding
+
+- **Issuer misattribution** — three separate CIK columns on `filings`, with a
+  foreign key on `issuer_cik` only. `issuer_matches_searched` is a *generated*
+  column, so it cannot drift from the values it compares. 15 filings flagged.
+- **Ticker ≠ security** — `securities` is keyed on `(issuer_cik,
+  security_title)`. There is no ticker or `issuer_trading_symbol` column
+  anywhere in the schema; deleting the misleading field is safer than storing
+  one people reach for by reflex.
+- **Holdings vs transactions** — separate tables. `holdings` has no
+  `transaction_date`, `transaction_code`, `shares` or `price_per_share` column,
+  because those facts don't exist in the source.
+- **Booleans** — `INTEGER` with `CHECK (x IN (0,1))`. SQLite is dynamically
+  typed and will store the *string* `'false'` in an INTEGER column, so the
+  CHECK is the actual enforcement. Verified: inserting `'false'` raises
+  `IntegrityError`.
+- **Zero vs undisclosed price** — `NULL` for undisclosed (81 rows), the value
+  as filed for a real zero (664). `NULL` also makes `AVG()` skip undisclosed
+  rows instead of dragging the average toward zero. A `CHECK` blocks empty
+  strings becoming an ambiguous third state.
+- **Fractional shares / precision** — all decimals stored as `TEXT`. Declaring
+  these `NUMERIC` or `REAL` would make SQLite convert `'184.90'` to the float
+  `184.9` on insert, undoing the parser's exactness. Casting happens once, in
+  the views.
+- **Repeat tranches** — `line_number` is part of the transactions primary key.
+- **Joint filings** — `transactions` has **no owner column**. A transaction
+  belongs to a filing; a filing has N owners via `filing_owners`. You cannot
+  sum shares per insider without joining through it and deciding what to do
+  about the 12 joint filings — a silent double-count becomes an explicit
+  question.
+- **Grants aren't purchases** — `transaction_codes.is_open_market` lets someone
+  who has never read a Form 4 write `WHERE is_open_market = 1`.
+
 ## Output schema
 
 Stage 2 emits 44 columns per transaction. The ones that carry the findings
@@ -464,15 +550,14 @@ above:
 
 ## What I'd add next
 
-**Immediate — the database step:**
+**Immediate:**
 
-- SQLite schema with `(accession_number, table, line_number)` as the transaction
-  key, a separate `reporting_owners` table for the many-to-many relationship
-  (finding 6), and a `securities` table keyed on `(issuer_cik, security_title)`
-  so tracking stocks resolve correctly (finding 2).
-- `NUMERIC` columns for shares and prices, nullable prices, foreign keys on
-  `issuer_cik` rather than ticker.
-- Idempotent upserts keyed on accession number, so re-running never duplicates.
+- **A curated `security_aliases` table** mapping filed titles to canonical
+  securities per issuer (finding 11). This is the largest known gap: NVIDIA and
+  Walmart common stock are currently split across two rows each.
+- **Per-owner share attribution for joint filings.** The schema makes the
+  ambiguity explicit but doesn't resolve it — 12 filings still need a documented
+  rule for whether shares are attributed to one owner, split, or duplicated.
 
 **Then:**
 

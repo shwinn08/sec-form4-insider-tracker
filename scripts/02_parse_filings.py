@@ -78,13 +78,16 @@ def main() -> int:
     documents = fetch_all(rows, client, force_refresh=args.force_refresh)
 
     # --- parse ---------------------------------------------------------------
-    transactions, holdings, warnings = [], [], []
+    filings, owners, transactions, holdings, warnings = [], [], [], [], []
     for row in rows:
         xml_text = documents.get(row["accession_number"])
         if xml_text is None:
             warnings.append(f"{row['accession_number']}: no XML fetched")
             continue
         result = parse_form4(xml_text, row)
+        if result.filing is not None:
+            filings.append(result.filing)
+        owners.extend(result.owners)
         transactions.extend(result.transactions)
         holdings.extend(result.holdings)
         warnings.extend(result.warnings)
@@ -94,22 +97,30 @@ def main() -> int:
     config.PROCESSED_DIR.mkdir(parents=True, exist_ok=True)
     txn_rows = [to_row(t) for t in transactions]
     hold_rows = [to_row(h) for h in holdings]
+    filing_rows = [to_row(f) for f in filings]
+    owner_rows = [to_row(o) for o in owners]
 
     metadata = {
         "source_enumeration": str(source),
         "filings_processed": len(documents),
         "transaction_count": len(txn_rows),
         "holding_count": len(hold_rows),
+        "filing_count": len(filing_rows),
+        "filing_owner_count": len(owner_rows),
         "warnings": warnings,
     }
 
     txn_json = config.PROCESSED_DIR / f"form4_transactions_{stamp}.json"
     txn_csv = config.PROCESSED_DIR / f"form4_transactions_{stamp}.csv"
     hold_csv = config.PROCESSED_DIR / f"form4_holdings_{stamp}.csv"
+    filing_csv = config.PROCESSED_DIR / f"form4_filing_records_{stamp}.csv"
+    owner_csv = config.PROCESSED_DIR / f"form4_filing_owners_{stamp}.csv"
 
     storage.write_dicts_json(txn_rows, metadata, txn_json, key="transactions")
     storage.write_dicts_csv(txn_rows, txn_csv)
     storage.write_dicts_csv(hold_rows, hold_csv)
+    storage.write_dicts_csv(filing_rows, filing_csv)
+    storage.write_dicts_csv(owner_rows, owner_csv)
 
     # --- summary -------------------------------------------------------------
     codes = Counter(t["transaction_code"] for t in txn_rows)
@@ -142,8 +153,9 @@ def main() -> int:
             print(f"    ... and {len(warnings) - 5} more")
 
     print(f"\n  JSON: {txn_json}")
-    print(f"  CSV:  {txn_csv}")
-    print(f"  CSV:  {hold_csv}\n")
+    for path in (txn_csv, hold_csv, filing_csv, owner_csv):
+        print(f"  CSV:  {path}")
+    print()
     return 0
 
 
