@@ -52,6 +52,41 @@ def write_csv(filings: list[Filing], path: Path) -> Path:
     return path
 
 
+def write_dicts_json(
+    rows: list[dict], metadata: dict, path: Path, key: str = "records"
+) -> Path:
+    """Write already-flattened dict rows (from the parser) with run metadata."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    document = {
+        "generated_at_utc": datetime.now(timezone.utc).isoformat(),
+        "metadata": metadata,
+        f"{key}_count": len(rows),
+        key: rows,
+    }
+    path.write_text(json.dumps(document, indent=2))
+    log.info("Wrote %d %s to %s", len(rows), key, path)
+    return path
+
+
+def write_dicts_csv(rows: list[dict], path: Path) -> Path:
+    """Write dict rows to CSV, taking column order from the first row.
+
+    All rows come from one dataclass, so their keys are identical and ordered;
+    an empty input still produces a valid (headerless) file rather than
+    crashing.
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", newline="", encoding="utf-8") as handle:
+        if not rows:
+            log.warning("No rows to write to %s", path)
+            return path
+        writer = csv.DictWriter(handle, fieldnames=list(rows[0].keys()))
+        writer.writeheader()
+        writer.writerows(rows)
+    log.info("Wrote %d rows to %s", len(rows), path)
+    return path
+
+
 def default_output_paths(stem: str = "form4_filings") -> tuple[Path, Path]:
     """Timestamped output paths, so a new run never silently overwrites the
     previous one — useful when you're tuning the lookback window."""
