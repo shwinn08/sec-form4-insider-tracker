@@ -28,7 +28,7 @@ rather than throwing an error.
 | 1. Enumerate filings | Complete |
 | 2. Fetch + parse XML | Complete |
 | 3. SQLite schema + load | Complete |
-| 4. Analysis / reporting | In progress |
+| 4. Analysis / reporting | Complete |
 
 Current corpus: **11 tickers, 854 filings, 1,998 transactions** over a 12-month
 window. All figures quoted in this README are measured from that corpus, not
@@ -109,8 +109,11 @@ python scripts/02_parse_filings.py
 # Stage 3 — build SQLite and load                -> data/form4.db
 python scripts/03_load_database.py --rebuild
 
-# Stage 4 — example analytical queries
+# Stage 4 — schema demonstration queries
 python scripts/04_example_queries.py
+
+# Stage 5 — the headline analysis (also writes a Markdown report)
+python scripts/05_analysis.py
 ```
 
 Useful flags:
@@ -462,16 +465,45 @@ for the same issuer:
 | Walmart | `Common Stock` | 2 |
 | Sky Quarry | `Common Stock, par value $0.0001` | 1 |
 
-The `securities` table therefore splits one real security across several rows,
-and per-security aggregates undercount.
+The `securities` table would therefore split one real security across several
+rows, and per-security aggregates would undercount.
 
-This is **deliberately not auto-normalised.** Collapsing `Common` into
-`Common Stock` is safe, but the same rule applied to Liberty Media would merge
-`Series C Common Stock` with `Series C Liberty Live Common Stock` — genuinely
-different securities. A string heuristic that silently merges distinct
-instruments is worse than the duplication it fixes. The correct solution is a
-curated alias table mapping filed titles to canonical securities per issuer,
-which is listed under "what I'd add next".
+**Resolved with a curated alias table, not a normalisation rule.** Collapsing
+`Common` into `Common Stock` is safe, but the same rule applied to Liberty Media
+would merge `Series C Common Stock` with `Series C Liberty Live Common Stock` —
+genuinely different securities. A string heuristic that silently merges distinct
+instruments is worse than the duplication it fixes.
+
+`security_aliases` holds three reviewed mappings, each carrying its
+justification:
+
+| Issuer | Filed as | → Canonical | Evidence |
+|---|---|---|---|
+| NVIDIA | `Common` | `Common Stock` | Non-overlapping filer agents (4 vs 14, none shared), same date range, single common class |
+| Walmart | `Common Stock` | `Common` | Agents `1579299` and `1502438` each filed **both** spellings themselves |
+| BlackRock MuniHoldings | `Series W-7 Variable··Rate…` | `Series W-7 Variable Rate…` | Identical but for doubled spaces; same agent, same issuer |
+
+Three candidates were examined and **rejected**:
+
+- **Goodyear `2022 Plan Restricted Stock Units` vs `Restricted Stock Units`** —
+  the footnotes settle it. The generic title covers RSUs *"accrued, pursuant to
+  an election by the reporting person, to the Retainer Deferral Account"* —
+  director deferred compensation — while the other is explicitly *"an RSU grant
+  under the 2022 Performance Plan."* The generic bucket is also heterogeneous,
+  holding both retainer accruals and plan vestings, so it can't map cleanly
+  anywhere.
+- **Pfizer `Phantom Stock Units` vs `Phantom Stock Units SSP`** — SSP is the
+  Supplemental Savings Plan, used by exactly one insider.
+- **Liberty Media `Series C Common Stock`** — ambiguous *and* time-dependent: it
+  appears only after Liberty Live split off into its own issuer. Assigning it to
+  either series would silently reallocate real transactions.
+
+Nothing is destructive: `securities.security_title` keeps the exact value as
+filed and is never rewritten. The alias resolves in `v_securities_canonical`, so
+every canonical aggregate can be audited against the unmerged data. The loader
+fails loudly if a curated mapping stops resolving, and rejects alias chains.
+
+**57 securities → 54 canonical.**
 
 ---
 
@@ -527,6 +559,154 @@ Plus two views: `v_transactions` (casts decimals, exposes `signed_shares` and
 - **Grants aren't purchases** — `transaction_codes.is_open_market` lets someone
   who has never read a Form 4 write `WHERE is_open_market = 1`.
 
+---
+
+# Sample queries & findings
+
+Real output from `scripts/05_analysis.py` against the loaded database — 854
+filings, 1,998 transactions, 24 issuers. The script is re-runnable and writes a
+Markdown report to `data/processed/analysis_report.md`. All security grouping
+uses the canonical security, never the searched ticker.
+
+## Net open-market insider activity by company
+
+Codes `P` and `S` only. Grants, option exercises and tax withholding are
+excluded — they're compensation mechanics, not investment decisions.
+
+| Company | Txns | Shares bought | Shares sold | Bought $M | Sold $M |
+|---|---|---|---|---|---|
+| Walmart | 128 | 0 | 31,315,447 | 0.00 | 3,597 |
+| NVIDIA | 497 | 0 | 10,411,638 | 0.00 | 1,941 |
+| ProPetro Holding | 1 | 0 | 16,600,000 | 0.00 | 276.56 |
+| Apple | 31 | 0 | 750,748 | 0.00 | 199.00 |
+| **Tesla** | 94 | **2,568,732** | 407,882 | **999.96** | 162.34 |
+| JPMorgan Chase | 42 | 0 | 414,953 | 0.00 | 127.40 |
+| Microsoft | 21 | 8,842 | 248,080 | 3.44 | 122.71 |
+| Liberty Media | 20 | 0 | 747,677 | 0.00 | 49.79 |
+| Exxon Mobil | 8 | 0 | 19,618 | 0.00 | 2.63 |
+| Goodyear | 1 | 100,000 | 0 | 0.75 | 0.00 |
+
+Ten of twelve companies show **zero** open-market insider buying over twelve
+months.
+
+## The most striking result: insiders almost never buy
+
+Everyone reads Form 4 data hoping to find executives buying their own stock with
+cash. Across 11 companies and a full year, that is **four people**:
+
+| Insider | Company | Date | Tranches | Shares | $M |
+|---|---|---|---|---|---|
+| Elon Musk | Tesla | 2025-09-12 | 25 | 2,568,732 | 999.96 |
+| John W Stanton | Microsoft | 2026-02-18 | 1 | 5,000 | 1.99 |
+| Bradford L Smith | Microsoft | 2025-04-23 | 1 | 3,842 | 1.45 |
+| Jason J Winkler | Goodyear | 2025-11-14 | 1 | 100,000 | 0.75 |
+
+**99.6% of the $1.004 billion is one person on one day.** Strip out Musk's
+single Tesla purchase and insider buying across eleven large-cap companies for a
+year totals **$4.2 million** — against roughly **$6.5 billion** of selling.
+
+This is also the clearest argument for the `is_open_market` flag. The raw data
+contains 418 `A` (grant) transactions that a naive query would read as
+"acquisitions", making insiders look like enthusiastic buyers when they were
+being handed equity.
+
+## Top insiders by transaction count and by dollar value
+
+| Insider | Company | Role | Txns | Filings |
+|---|---|---|---|---|
+| Jen Hsun Huang | NVIDIA | President and CEO | 306 | 27 |
+| Colette Kress | NVIDIA | EVP & CFO | 143 | 12 |
+| Walton Family Holdings Trust | Walmart | — | 70 | 23 |
+| Kathleen Wilson-Thompson | Tesla | Director | 44 | 3 |
+| Renee L Wilm | Liberty Media | Chief Legal/Admin Officer | 33 | 7 |
+
+By open-market dollar value (single-owner filings only, so joint filings can't
+double-count):
+
+| Insider | Company | Sold $M |
+|---|---|---|
+| Walton Family Holdings Trust | Walmart | 3,523 |
+| Jen Hsun Huang | NVIDIA | 782.04 |
+| Mark A Stevens | NVIDIA | 699.59 |
+| **Exxon Mobil Corp** | **ProPetro Holding** | **276.56** |
+| Ajay K Puri | NVIDIA | 183.00 |
+| Arthur D Levinson | Apple | 107.63 |
+
+Note row four: the "insider" is **Exxon Mobil Corp**, and the company is
+**ProPetro Holding** — a corporation selling down a stake in another company it
+held >10% of. That row appears in an Exxon-ticker search and has nothing to do
+with Exxon insider sentiment. It's the misattribution finding showing up in a
+headline number.
+
+## Tracking stocks: what a FWONK ticker search actually returns
+
+| Security | Actual issuer | Formula One? | Txns |
+|---|---|---|---|
+| Stock Option (Right to Buy) - LLYVK | Liberty Media Corp | **no** | 61 |
+| Series C Liberty Live Common Stock | Liberty Media Corp | **no** | 56 |
+| Series C Liberty Formula One Common Stock | Liberty Media Corp | yes | 37 |
+| Restricted Stock Units - LLYVK | Liberty Media Corp | **no** | 16 |
+| Stock Option (Right to Buy) - FWONK | Liberty Media Corp | yes | 14 |
+| Restricted Stock Units-FWONK | Liberty Media Corp | yes | 13 |
+| Series A Liberty Live Common Stock | Liberty Media Corp | **no** | 11 |
+| Series C Common Stock | Liberty Media Corp | **no** | 4 |
+| Common Stock | **Live Nation Entertainment** | **no** | 2 |
+| Series C Liberty Live Group Common Stock | **Liberty Live Holdings** | **no** | 2 |
+| Forward sale contract (obligation to sell) | Live Nation Entertainment | **no** | 1 |
+| 2.375% Exch. Sr. Debentures due 2053 | Live Nation Entertainment | **no** | 1 |
+
+**Only 66 of 232 transactions (28.4%) are Formula One instruments** — counting
+generously, i.e. including FWONK-linked options and RSUs, not just common stock.
+The search spans **20 distinct securities across 3 different issuers**, and
+includes a bond and a forward sale contract.
+
+A pipeline that labelled every row `FWONK` — the obvious approach, and what the
+XML's own `issuerTradingSymbol` field would tell you — would be wrong on **71.6%
+of the data**, with no error raised anywhere.
+
+## Code `G` "gifts" are frequently not gifts
+
+`G` is defined as *bona fide gift*, which reads like charitable giving. The
+largest rows say otherwise:
+
+| Insider | Company | Date | Shares | Ownership | Held via |
+|---|---|---|---|---|---|
+| Jen Hsun Huang | NVIDIA | 2026-03-18 | 58,962,602 | I | By Irrevocable Remainder Trust |
+| Jen Hsun Huang | NVIDIA | 2026-03-18 | 29,481,301 | I | By Grantor Retained Annuity Trust |
+| Jen Hsun Huang | NVIDIA | 2026-03-18 | 29,481,301 | I | By Grantor Retained Annuity Trust |
+| A Brooke Seawell | NVIDIA | 2025-08-29 | 1,200,000 | I | By Administrative Trust |
+| Tench Coxe | NVIDIA | 2025-09-08 | 1,000,000 | I | By Trust |
+
+The three largest — 117.9 million shares on a single day — are footnoted as
+*"a transfer of shares by The Lori Lynn Huang 2016 Annuity Trust II Agreement
+(the 'Grantor Retained Annuity Trust 1') to The Huang Irrevocable Remainder
+Trust."* That's estate planning moving stock between the insider's own vehicles,
+not stock leaving their control. Every large `G` row is flagged `I` (indirect).
+
+Treating code `G` as philanthropy — or as any change in beneficial ownership —
+would be badly wrong. This is a **new finding from the analysis stage**, not
+something visible during parsing.
+
+## Section 16 deadline outliers
+
+Insiders must file within two business days.
+
+| Insider | Company | Transaction | Filed | Days | Code |
+|---|---|---|---|---|---|
+| Bradford L Smith | Microsoft | 2025-04-23 | 2025-12-12 | **233** | `P` |
+| Renee L Wilm | Liberty Media | 2026-02-04 | 2026-02-23 | 19 | `A` |
+| Brian J Wendling | Liberty Media | 2026-02-04 | 2026-02-23 | 19 | `A` |
+| Amy Coleman | Microsoft | 2025-09-15 | 2025-10-03 | 18 | `A` |
+
+The Microsoft outlier is 233 days — and it's a **purchase**, the most
+signal-bearing transaction type there is. It's also why the analysis reports a
+transaction-date range starting 2025-04-23, four months before the 12-month
+*filing* window opens: a late enough filing drags a much older transaction into
+the dataset. Any query that treats `filing_date` as a proxy for when something
+happened inherits that error.
+
+---
+
 ## Output schema
 
 Stage 2 emits 44 columns per transaction. The ones that carry the findings
@@ -550,16 +730,31 @@ above:
 
 ## What I'd add next
 
-**Immediate:**
+**Immediate — footnote text extraction.** This is now the highest-value gap,
+and the analysis stage is what proved it. Three separate findings all bottomed
+out in footnote prose that the pipeline doesn't capture:
 
-- **A curated `security_aliases` table** mapping filed titles to canonical
-  securities per issuer (finding 11). This is the largest known gap: NVIDIA and
-  Walmart common stock are currently split across two rows each.
-- **Per-owner share attribution for joint filings.** The schema makes the
-  ambiguity explicit but doesn't resolve it — 12 filings still need a documented
-  rule for whether shares are attributed to one owner, split, or duplicated.
+- 81 transactions carry a footnote *instead of* a price, and the footnote often
+  contains the figure ("a weighted average price of $X").
+- Code `G` "gifts" can only be distinguished from trust-to-trust transfers by
+  reading the footnote.
+- The Goodyear alias decision required reading footnotes by hand.
+
+Only footnote **IDs** are stored today. Extracting the text would turn three
+manual investigations into queryable columns, and is a prerequisite for
+classifying `J` ("other", 137 transactions) at all.
 
 **Then:**
+
+- **Per-owner share attribution for joint filings.** The schema makes the
+  ambiguity explicit and the dollar-value query sidesteps it by restricting to
+  single-owner filings — but 12 filings still need a documented rule rather than
+  an exclusion.
+- **A `10b5-1` flag.** Filings indicate whether a trade was made under a
+  pre-arranged trading plan (the `aff10b5One` element and footnote text).
+  Pre-planned sales carry far less signal than discretionary ones, and the
+  dataset currently can't separate them — which materially affects how the
+  "insiders almost never buy" finding should be read.
 
 - **Form 4/A amendment handling.** Amendments correct earlier filings. The
   current 12-month window happens to contain none, so the dedup logic is

@@ -45,6 +45,49 @@ TRANSACTION_CODES = [
 ]
 
 
+# Curated security title aliases: (issuer_cik, title_as_filed, canonical_title, note).
+#
+# Keyed on (issuer_cik, title) rather than security_id because security_id is a
+# surrogate assigned at load time — hardcoding ids would silently point at the
+# wrong securities on a rebuild.
+#
+# Every entry was reviewed individually against filer-agent overlap, date ranges
+# and filing footnotes. Deliberately NOT included, with reasons, are:
+#   - Goodyear '2022 Plan Restricted Stock Units' vs 'Restricted Stock Units':
+#     the generic title includes director RSUs accrued to a Retainer Deferral
+#     Account, a different instrument from a 2022 Performance Plan grant.
+#   - Pfizer 'Phantom Stock Units' vs 'Phantom Stock Units SSP': SSP is the
+#     Supplemental Savings Plan, used by a single insider.
+#   - Liberty Media 'Series C Common Stock': ambiguous and time-dependent —
+#     it appears only after Liberty Live split off into its own issuer, and
+#     assigning it to either series would reallocate real transactions.
+SECURITY_ALIASES: list[tuple[int, str, str, str]] = [
+    (
+        1045810,  # NVIDIA
+        "Common",
+        "Common Stock",
+        "Same security. The two spellings come from non-overlapping sets of "
+        "filing agents (4 vs 14, none shared) over the same date range; NVIDIA "
+        "has a single class of common stock.",
+    ),
+    (
+        104169,  # Walmart
+        "Common Stock",
+        "Common",
+        "Same security. Filing agents 1579299 and 1502438 each used BOTH "
+        "spellings on different dates; Walmart has a single class of common "
+        "stock. Canonical is 'Common', that issuer's dominant spelling (289 vs 2).",
+    ),
+    (
+        1034665,  # BlackRock MuniHoldings Fund
+        "Series W-7 Variable  Rate Muni Term  Preferred Shares",
+        "Series W-7 Variable Rate Muni Term Preferred Shares",
+        "Identical title apart from doubled spaces, same filing agent and same "
+        "issuer. A typo, not a distinct series.",
+    ),
+]
+
+
 def connect(db_path: Path | None = None) -> sqlite3.Connection:
     """Open a connection with foreign keys enforced.
 
@@ -312,8 +355,64 @@ def load(
     counts["holdings"] = len(hold_rows)
 
     counts["securities"] = conn.execute("SELECT COUNT(*) FROM securities").fetchone()[0]
+    counts["security_aliases"] = apply_security_aliases(conn)
     conn.commit()
     return counts
+
+
+def apply_security_aliases(conn: sqlite3.Connection) -> int:
+    """Insert the curated alias rows, resolving titles to security ids.
+
+    Fails loudly rather than silently skipping: an alias whose title no longer
+    matches anything would quietly stop merging, and the resulting aggregates
+    would look plausible. If a mapping cannot be resolved, that is a signal the
+    curation needs revisiting, not something to swallow.
+    """
+    resolved = 0
+    for issuer_cik, filed_title, canonical_title, note in SECURITY_ALIASES:
+        rows = {
+            r["security_title"]: r["security_id"]
+            for r in conn.execute(
+                "SELECT security_id, security_title FROM securities "
+                "WHERE issuer_cik = ? AND security_title IN (?, ?)",
+                (issuer_cik, filed_title, canonical_title),
+            )
+        }
+        src = rows.get(filed_title)
+        dst = rows.get(canonical_title)
+
+        if src is None or dst is None:
+            missing = filed_title if src is None else canonical_title
+            log.warning(
+                "Alias not applied for issuer %s: no security titled %r. "
+                "The curated alias list may be stale.",
+                issuer_cik, missing,
+            )
+            continue
+
+        conn.execute(
+            "INSERT INTO security_aliases (security_id, canonical_security_id, note) "
+            "VALUES (?, ?, ?) ON CONFLICT(security_id) DO UPDATE SET "
+            "canonical_security_id = excluded.canonical_security_id, note = excluded.note",
+            (src, dst, note),
+        )
+        resolved += 1
+
+    # Reject alias chains (A -> B where B -> C). The canonical view resolves a
+    # single hop only, so a chain would leave rows pointing at a non-canonical
+    # target and quietly split an aggregate.
+    chained = conn.execute(
+        "SELECT a.security_id FROM security_aliases a "
+        "JOIN security_aliases b ON b.security_id = a.canonical_security_id"
+    ).fetchall()
+    if chained:
+        raise ValueError(
+            f"Alias chain detected for security_id(s) {[r[0] for r in chained]}. "
+            "Point every alias directly at its final canonical security."
+        )
+
+    log.info("Applied %d of %d curated security aliases", resolved, len(SECURITY_ALIASES))
+    return resolved
 
 
 def _read_csv(path: Path) -> list[dict]:

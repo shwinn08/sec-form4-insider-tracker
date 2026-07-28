@@ -142,6 +142,56 @@ CREATE TABLE IF NOT EXISTS securities (
 
 
 -- ---------------------------------------------------------------------------
+-- security_aliases: curated mapping of filed security titles to a canonical
+-- security, for the same issuer.
+--
+-- FINDING: security_title is free text and filing agents spell the same
+-- security differently. NVIDIA common stock is filed as both 'Common Stock'
+-- (413 transactions) and 'Common' (153), so per-security aggregates undercount.
+--
+-- This is deliberately a CURATED table, not a normalisation rule. A string
+-- heuristic that collapsed 'Common' into 'Common Stock' would, applied
+-- consistently, also merge Liberty Media's 'Series C Common Stock' with
+-- 'Series C Liberty Live Common Stock' — genuinely different securities.
+-- Silently merging distinct instruments is worse than the duplication it fixes,
+-- so every row here was reviewed individually and carries its justification.
+--
+-- Nothing is destructive: securities.security_title keeps the exact value as
+-- filed and is never rewritten. The alias is resolved in views, so every
+-- canonical aggregate can be checked back against the unmerged data.
+--
+-- The CHECK prevents a security aliasing to itself; the loader additionally
+-- rejects chains (an alias whose target is itself aliased).
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS security_aliases (
+    security_id            INTEGER PRIMARY KEY REFERENCES securities(security_id),
+    canonical_security_id  INTEGER NOT NULL    REFERENCES securities(security_id),
+    note                   TEXT    NOT NULL,
+    CHECK (security_id <> canonical_security_id)
+);
+
+
+-- ---------------------------------------------------------------------------
+-- v_securities_canonical: every security resolved to its canonical form.
+--
+-- LEFT JOIN, so a security with no alias maps to itself. This means callers can
+-- always join through this view without caring whether an alias exists.
+-- ---------------------------------------------------------------------------
+CREATE VIEW IF NOT EXISTS v_securities_canonical AS
+SELECT
+    s.security_id,
+    s.issuer_cik,
+    s.security_title                                  AS title_as_filed,
+    COALESCE(a.canonical_security_id, s.security_id)  AS canonical_security_id,
+    COALESCE(cs.security_title, s.security_title)     AS canonical_title,
+    (a.security_id IS NOT NULL)                       AS is_aliased,
+    a.note                                            AS alias_note
+FROM securities s
+LEFT JOIN security_aliases a  ON a.security_id  = s.security_id
+LEFT JOIN securities       cs ON cs.security_id = a.canonical_security_id;
+
+
+-- ---------------------------------------------------------------------------
 -- transaction_codes: lookup that encodes what each Form 4 code means.
 --
 -- FINDING: only 847 of 1,998 rows are open-market trades. The rest are grants
@@ -284,7 +334,13 @@ SELECT
     f.issuer_matches_searched,
     c.cik                                   AS issuer_cik,
     c.name                                  AS issuer_name,
+    -- Both are exposed on purpose: security_title is what the filer wrote,
+    -- canonical_security_title is what it means. Any aggregate built on the
+    -- canonical value can be audited against the raw one.
     s.security_title,
+    vsc.canonical_title                     AS canonical_security_title,
+    vsc.canonical_security_id,
+    vsc.is_aliased,
     t.transaction_code,
     tc.label                                AS transaction_label,
     tc.is_open_market,
@@ -307,6 +363,7 @@ FROM transactions t
 JOIN filings           f  ON f.accession_number = t.accession_number
 JOIN companies         c  ON c.cik             = f.issuer_cik
 JOIN securities        s  ON s.security_id     = t.security_id
+JOIN v_securities_canonical vsc ON vsc.security_id = t.security_id
 JOIN transaction_codes tc ON tc.code           = t.transaction_code
 LEFT JOIN securities   us ON us.security_id    = t.underlying_security_id;
 
