@@ -28,7 +28,7 @@ from sec_form4 import config, database  # noqa: E402
 
 # Every insider named on a filing, resolved through the join table. Used by the
 # per-owner queries below. A joint filing credits each named owner, which is
-# right for "activity" but would double-count shares — the share-weighted
+# right for "activity" but would double-count shares. The share-weighted
 # queries below are restricted to single-owner filings for that reason.
 OWNER_JOIN = """
     JOIN filing_owners    fo ON fo.accession_number = v.accession_number
@@ -54,8 +54,8 @@ ANALYSES: list[tuple[str, str, str]] = [
         GROUP BY issuer_cik
         ORDER BY sold_usd_m DESC
         """,
-        "Only codes P and S. Grants, option exercises and tax withholding excluded — "
-        "they are compensation mechanics, not investment decisions.",
+        "Only codes P and S. Grants, option exercises and tax withholding are excluded "
+        "because they are compensation mechanics, not investment decisions.",
     ),
     (
         "Top insiders by transaction count",
@@ -75,7 +75,7 @@ ANALYSES: list[tuple[str, str, str]] = [
         ORDER BY txns DESC
         LIMIT 12
         """,
-        "Insiders reached via filing_owners — transactions carry no owner column.",
+        "Insiders reached via filing_owners; transactions carry no owner column.",
     ),
     (
         "Top insiders by open-market dollar value",
@@ -223,7 +223,7 @@ ANALYSES: list[tuple[str, str, str]] = [
                                             WHERE is_aliased = 1)
         GROUP BY vsc.canonical_security_id
         """,
-        "Three curated merges. securities.security_title is never rewritten — "
+        "Three curated merges. securities.security_title is never rewritten; "
         "the alias resolves in views only, so aggregates stay auditable.",
     ),
 ]
@@ -303,7 +303,7 @@ def main() -> int:
     header = (f"{scope['filings']} filings, {scope['txns']} transactions, "
               f"{scope['issuers']} issuers, {scope['d0']} to {scope['d1']}")
     print("\n" + "#" * 104)
-    print(f"# FORM 4 INSIDER TRANSACTION ANALYSIS — {header}")
+    print(f"# FORM 4 INSIDER TRANSACTION ANALYSIS: {header}")
     print("#" * 104)
 
     sections = []
@@ -316,7 +316,7 @@ def main() -> int:
         report = [
             "# Form 4 Insider Transaction Analysis",
             "",
-            f"_Generated {datetime.now().strftime('%Y-%m-%d %H:%M')} — {header}._",
+            f"_Generated {datetime.now().strftime('%Y-%m-%d %H:%M')}. {header}._",
             "",
             "Produced by `scripts/05_analysis.py`. All security grouping uses the "
             "curated canonical security, never the searched ticker.",

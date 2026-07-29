@@ -20,7 +20,7 @@ SCHEMA_FILE = Path(__file__).resolve().parent / "schema.sql"
 DEFAULT_DB_PATH = config.DATA_DIR / "form4.db"
 
 # Form 4 transaction codes. is_open_market marks the only two that represent
-# someone choosing to trade on the market — everything else is compensation,
+# someone choosing to trade on the market. Everything else is compensation,
 # tax mechanics, or a transfer.
 TRANSACTION_CODES = [
     ("P", "Open-market or private purchase", 1),
@@ -48,18 +48,18 @@ TRANSACTION_CODES = [
 # Curated security title aliases: (issuer_cik, title_as_filed, canonical_title, note).
 #
 # Keyed on (issuer_cik, title) rather than security_id because security_id is a
-# surrogate assigned at load time — hardcoding ids would silently point at the
-# wrong securities on a rebuild.
+# surrogate assigned at load time, and hardcoded ids would point at the wrong
+# securities after a rebuild.
 #
 # Every entry was reviewed individually against filer-agent overlap, date ranges
-# and filing footnotes. Deliberately NOT included, with reasons, are:
+# and filing footnotes. Not included, with reasons:
 #   - Goodyear '2022 Plan Restricted Stock Units' vs 'Restricted Stock Units':
 #     the generic title includes director RSUs accrued to a Retainer Deferral
 #     Account, a different instrument from a 2022 Performance Plan grant.
 #   - Pfizer 'Phantom Stock Units' vs 'Phantom Stock Units SSP': SSP is the
 #     Supplemental Savings Plan, used by a single insider.
-#   - Liberty Media 'Series C Common Stock': ambiguous and time-dependent —
-#     it appears only after Liberty Live split off into its own issuer, and
+#   - Liberty Media 'Series C Common Stock': ambiguous and time-dependent.
+#     It appears only after Liberty Live split off into its own issuer, so
 #     assigning it to either series would reallocate real transactions.
 SECURITY_ALIASES: list[tuple[int, str, str, str]] = [
     (
@@ -164,8 +164,8 @@ def _as_bool_int(value) -> int:
     """Coerce a CSV/JSON boolean to a strict 0/1 for a CHECK-constrained column.
 
     CSV has no boolean type, so values arrive as the strings 'True'/'False'.
-    This is the exact trap the schema guards against — 'False' is truthy in
-    Python — so the conversion is explicit rather than a bool() call.
+    This is the exact trap the schema guards against, since 'False' is truthy in
+    Python, so the conversion is explicit rather than a bool() call.
     """
     if isinstance(value, bool):
         return 1 if value else 0
@@ -189,7 +189,7 @@ def load(
     """Load parsed records. Returns row counts per table.
 
     Order matters: companies before filings, filings before their children, and
-    securities before anything referencing them — foreign keys are enforced.
+    securities before anything referencing them, because foreign keys are on.
     """
     counts: dict[str, int] = {}
     sec_cache: dict[tuple, int] = {}
@@ -197,7 +197,7 @@ def load(
     # --- companies ----------------------------------------------------------
     # Taken from the filing records, which carry the issuer straight from the
     # XML <issuer> block. 23 companies for 11 tickers, because misattributed
-    # filings reference genuinely different issuers.
+    # filings reference different issuers.
     companies = {int(r["issuer_cik"]): r["issuer_name"] for r in filing_records}
     for row in holdings:
         companies.setdefault(int(row["issuer_cik"]), row["issuer_name"])
@@ -298,7 +298,7 @@ def load(
                 row["transaction_code"],
                 _as_bool_int(row["equity_swap_involved"]),
                 _none_if_blank(row["transaction_shares"]),
-                # Stays NULL when undisclosed; '0' when genuinely zero.
+                # Stays NULL when undisclosed, '0' when the price is zero.
                 _none_if_blank(row["transaction_price_per_share"]),
                 _none_if_blank(row["acquired_disposed_code"]),
                 _none_if_blank(row["shares_owned_following"]),

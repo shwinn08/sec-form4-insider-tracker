@@ -25,7 +25,7 @@ CACHE_MAX_AGE_SECONDS = 7 * 24 * 3600  # tickers change rarely; a week is plenty
 
 @dataclass(frozen=True)
 class Company:
-    """One resolved company. Both CIK forms are kept deliberately.
+    """One resolved company, holding both CIK forms.
 
     EDGAR is inconsistent about CIK formatting:
       - the submissions API wants the 10-digit zero-padded form ("0000320193")
@@ -67,7 +67,7 @@ def load_cik_overrides(path: Path | None = None) -> dict[str, int]:
 
     Overrides exist because a ticker's CIK is not stable over time. After a
     merger or holding-company reorganization the ticker is reassigned to a new
-    registrant, while the filing history stays with the predecessor — and
+    registrant, while the filing history stays with the predecessor, and
     company_tickers.json only ever shows you the current one. Without a way to
     pin the CIK you'd silently get zero filings and no error.
 
@@ -116,7 +116,7 @@ def build_lookup(client: SECClient, force_refresh: bool = False) -> dict[str, Co
 
     The outer keys are meaningless row numbers, so we throw them away and
     re-key by ticker. Note cik_str is an *integer* with leading zeros already
-    stripped — the zero-padding we need is reconstructed here with zfill(10).
+    stripped, so the zero-padding we need is reconstructed here with zfill(10).
     """
     raw = _fetch_ticker_map(client, force_refresh=force_refresh)
 

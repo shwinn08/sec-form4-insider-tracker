@@ -1,7 +1,7 @@
 """Enumerate a company's Form 4 filings from the EDGAR submissions API.
 
-This module lists *what filings exist*. It deliberately does not download or
-parse filing content — that's the next step of the project.
+This module lists *what filings exist*. It does not download or
+parse filing content. That's the next step of the project.
 """
 
 from __future__ import annotations
@@ -37,7 +37,7 @@ class Filing:
     primary_doc_description: str
     filing_index_url: str     # lists every file in the submission
     primary_document_url: str  # SEC's rendered, human-readable view
-    raw_xml_url: str          # the machine-readable original — parse this
+    raw_xml_url: str          # the machine-readable original; parse this one
     size_bytes: int
 
 
@@ -72,13 +72,13 @@ def _build_urls(
 ) -> tuple[str, str, str]:
     """Construct (filing_index_url, primary_document_url, raw_xml_url).
 
-    Note the CIK here is *unpadded* — the opposite of what the submissions API
+    Note the CIK here is *unpadded*, the opposite of what the submissions API
     wanted. That asymmetry is an EDGAR quirk, not a mistake.
 
     For Form 4, `primaryDocument` usually points at an XSL-rendered path like
     "xslF345X06/form4.xml". That URL serves SEC's human-readable HTML view of
     the filing, not the underlying data. Removing the "xsl*/" path segment
-    yields the raw XML original — which is what you actually want to parse.
+    yields the raw XML original, which is what you want to parse.
     """
     bare = _accession_no_dashes(accession_number)
     folder = f"{config.ARCHIVES_BASE}/{cik}/{bare}"
@@ -162,7 +162,7 @@ def _records_to_filings(records, company: Company, since: date) -> list[Filing]:
 
 # Form types that only a foreign private issuer files. An FPI is exempt from
 # Section 16 under Exchange Act Rule 3a12-3(b), so its insiders never file
-# Form 4 — an empty result for one of these is correct, not a bug.
+# Form 4, so an empty result for one of these is correct rather than a bug.
 FOREIGN_ISSUER_FORMS = {"20-F", "6-K", "40-F", "F-1", "F-3", "F-4"}
 
 
@@ -173,10 +173,10 @@ def diagnose_empty_result(payload: dict, since: date) -> str:
     to tell apart from the count alone:
       - the CIK is wrong (ticker reassigned after a reorg) -> fixable
       - the company is a foreign private issuer -> no Form 4s will ever exist
-      - insiders simply didn't trade in this window -> genuinely empty
+      - the insiders did not trade in this window -> genuinely empty
 
     Silent zeros are the most dangerous output this scraper can produce, so we
-    name the cause. Uses only the payload we already fetched — no extra request.
+    name the cause. Uses only the payload we already fetched, so no extra request.
     """
     recent = payload.get("filings", {}).get("recent", {})
     forms = recent.get("form", [])
@@ -200,11 +200,11 @@ def diagnose_empty_result(payload: dict, since: date) -> str:
         )
 
     if not forms:
-        return "no filings at all under this CIK — likely the wrong CIK"
+        return "no filings at all under this CIK, likely the wrong CIK"
 
     return (
         f"no Form 4 in {len(forms)} recent filings "
-        f"(forms present: {', '.join(sorted(set(forms))[:6])}) — check the CIK"
+        f"(forms present: {', '.join(sorted(set(forms))[:6])}). Check the CIK"
     )
 
 
@@ -221,12 +221,12 @@ def fetch_form4_filings(
     """Fetch every Form 4 for one company filed on or after `since`.
 
     Returns (filings, note). `note` is None on a normal result, or a
-    human-readable explanation when the result is empty — see
+    human-readable explanation when the result is empty. See
     diagnose_empty_result().
 
     One request per company in the normal case. `filings.recent` is guaranteed
     to hold at least the last 12 months *or* the last 1000 filings, whichever
-    is larger — so for a 6-12 month window it's almost always sufficient. The
+    is larger, so for a 6-12 month window it is almost always sufficient. The
     exception is a very heavy filer whose 1000 most recent filings don't reach
     back a full year; for those we follow the `filings.files` overflow chunks.
     """
@@ -251,7 +251,7 @@ def fetch_form4_filings(
     oldest = _oldest_filing_date(recent)
     if oldest is not None and oldest > since:
         log.info(
-            "%s: 'recent' only reaches back to %s, need %s — checking older chunks",
+            "%s: 'recent' only reaches back to %s, need %s, checking older chunks",
             company.ticker, oldest, since,
         )
         for extra in filings_section.get("files", []):
@@ -267,12 +267,12 @@ def fetch_form4_filings(
                 _records_to_filings(_iter_filing_records(chunk), company, since)
             )
 
-    # Newest first — the order you'd want when eyeballing the output.
+    # Newest first, the order you want when eyeballing the output.
     results.sort(key=lambda f: (f.filing_date, f.accession_number), reverse=True)
 
     if not results:
         note = diagnose_empty_result(payload, since)
-        log.warning("%s: 0 Form 4 filings — %s", company.ticker, note)
+        log.warning("%s: 0 Form 4 filings, %s", company.ticker, note)
         return results, note
 
     log.info("%s: found %d Form 4 filings since %s", company.ticker, len(results), since)

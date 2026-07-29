@@ -1,6 +1,6 @@
 """Write the enumerated filing list to disk as JSON and CSV.
 
-Two formats on purpose:
+Two formats:
   - JSON keeps the run metadata (when, what window, which tickers failed)
     alongside the data, which is what you want when you come back in a week
     and wonder what a file actually contains.
@@ -89,7 +89,7 @@ def write_dicts_csv(rows: list[dict], path: Path) -> Path:
 
 def default_output_paths(stem: str = "form4_filings") -> tuple[Path, Path]:
     """Timestamped output paths, so a new run never silently overwrites the
-    previous one — useful when you're tuning the lookback window."""
+    previous one, which helps when tuning the lookback window."""
     stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     return (
         config.RAW_DIR / f"{stem}_{stamp}.json",

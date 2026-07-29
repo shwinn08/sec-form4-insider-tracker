@@ -2,8 +2,8 @@
 
 Design notes worth reading before you trust the output:
 
-* The XML's <issuer> block is the ONLY authoritative statement of what company
-  a filing is about. The ticker we searched under is not — see
+* The XML's <issuer> block is the only authoritative statement of what company
+  a filing is about. The ticker we searched under is not. See
   `issuer_matches_searched`.
 
 * Every leaf value in this schema is wrapped: <transactionShares><value>N.
@@ -27,7 +27,8 @@ log = logging.getLogger(__name__)
 
 # Boolean fields arrive in three different encodings across the corpus:
 # "1"/"0" (most filings), "true"/"false" (some filer agents), and the element
-# being absent entirely (~300 occurrences). Absent means "not this role".
+# being absent entirely (863 across the four role fields). Absent means "not
+# this role".
 # This matters enormously: bool("false") is True in Python, so a naive
 # truthiness check silently inverts the flag on every string-form filing.
 _TRUE_STRINGS = {"1", "true", "y", "yes"}
@@ -61,10 +62,10 @@ def _parse_bool(raw: str | None) -> bool:
 def _parse_decimal(raw: str | None) -> Decimal | None:
     """Parse a numeric value, preserving exact decimal representation.
 
-    Decimal, not float: these are share counts and money. Roughly a third of
-    share counts in the corpus are fractional (DRIP/401k plans), and float
+    Decimal, not float: these are share counts and money. 269 share counts in
+    the corpus have a non-zero fractional part (DRIP/401k plans), and float
     can't represent 184.90 exactly. None means the filer didn't disclose a
-    number — which is NOT the same as 0.00, see `price_is_disclosed`.
+    number, which is not the same as 0.00. See `price_is_disclosed`.
     """
     if raw is None:
         return None
@@ -79,7 +80,7 @@ def _footnote_ids(element: ET.Element | None) -> str:
     """Collect footnote ids referenced anywhere under `element`.
 
     Kept because a footnote is often the only explanation for a missing price
-    or a 'J' (other) transaction code — without it those rows are unreadable.
+    or a 'J' (other) transaction code, and without it those rows are unreadable.
     """
     if element is None:
         return ""
@@ -123,7 +124,7 @@ class Transaction:
     accession_number: str
     searched_ticker: str        # the ticker whose feed surfaced this filing
     searched_cik: int           # the CIK whose feed surfaced this filing
-    filer_agent_cik: int        # from the accession prefix — NOT the issuer
+    filer_agent_cik: int        # from the accession prefix, not the issuer
     filing_date: str
     raw_xml_url: str
 
@@ -153,7 +154,7 @@ class Transaction:
 
     # --- the transaction ----------------------------------------------------
     table: str                  # "non-derivative" | "derivative"
-    line_number: int            # ordinal within the filing — see note below
+    line_number: int            # ordinal within the filing; see note below
     security_title: str         # what was ACTUALLY traded
     transaction_date: str
     deemed_execution_date: str
@@ -180,11 +181,11 @@ class Transaction:
 @dataclass(frozen=True)
 class Holding:
     """A position with no transaction attached. Deliberately kept out of the
-    transaction stream — it has no date, code, share count, or price, so it
+    transaction stream: it has no date, code, share count, or price, so it
     would appear as a phantom zero-share trade if merged."""
 
     accession_number: str
-    holding_number: int         # ordinal within the filing — natural key with accession
+    holding_number: int         # ordinal within filing; natural key with accession
     searched_ticker: str
     issuer_cik: int
     issuer_name: str
@@ -280,7 +281,7 @@ def _parse_owners(root: ET.Element) -> list[ReportingOwner]:
 
 
 def _filer_agent_cik(accession_number: str) -> int:
-    """The accession prefix is the CIK of whoever *transmitted* the filing —
+    """The accession prefix is the CIK of whoever *transmitted* the filing,
     usually a filing agent, sometimes the company itself. It is never reliably
     the issuer. Recorded so the distinction can't get lost downstream."""
     try:
@@ -317,7 +318,7 @@ def parse_form4(xml_text: str, enum_row: dict) -> ParseResult:
         # of some *other* company.
         result.warnings.append(
             f"{accession}: issuer CIK {issuer_cik} != searched CIK {searched_cik} "
-            f"({enum_row['ticker']}) — filing is about "
+            f"({enum_row['ticker']}), filing is about "
             f"{_text(root, 'issuer/issuerName')!r}"
         )
 
@@ -337,7 +338,7 @@ def parse_form4(xml_text: str, enum_row: dict) -> ParseResult:
         "period_of_report": _text(root, "periodOfReport") or "",
         # Set when the filer has ceased to be a Section 16 insider (resignation,
         # reorganisation). Such "exit filings" legitimately report no
-        # transactions at all — an empty filing is expected, not a parse failure.
+        # transactions at all, so an empty filing is expected rather than a failure.
         "not_subject_to_section16": _parse_bool(_text(root, "notSubjectToSection16")),
     }
 
@@ -346,7 +347,7 @@ def parse_form4(xml_text: str, enum_row: dict) -> ParseResult:
         result.warnings.append(f"{accession}: no reportingOwner found")
         owners = [ReportingOwner("", "", False, False, False, False, "", "")]
 
-    # A filing with multiple owners reports transactions *jointly* — the shares
+    # A filing with multiple owners reports transactions *jointly*, so the shares
     # are not per-owner. Emitting one row per (transaction x owner) would
     # multiply the share counts, so we attribute rows to the first owner and
     # carry the full roster alongside. The owners file keeps the complete
@@ -402,8 +403,8 @@ def parse_form4(xml_text: str, enum_row: dict) -> ParseResult:
 
     # --- transactions --------------------------------------------------------
     # line_number is a stable ordinal within the filing. It's required, not
-    # cosmetic: 247 filings contain two or more rows with an identical
-    # (security_title, transaction_date, transaction_code) triple — genuinely
+    # cosmetic: 164 filings contain two or more rows with an identical
+    # (security_title, transaction_date, transaction_code) triple. These are
     # separate tranches or price points, not duplicates. Without an ordinal
     # there is no key that distinguishes them.
     line_number = 0
@@ -424,8 +425,8 @@ def parse_form4(xml_text: str, enum_row: dict) -> ParseResult:
 
             # Distinguish "disclosed as zero" from "not disclosed at all".
             # Both are common and they mean completely different things:
-            # a $0 price on a grant (code A) or gift (G) is a real fact —
-            # no cash changed hands — whereas an absent price means the filer
+            # a $0 price on a grant (code A) or gift (G) is a real fact,
+            # meaning no cash changed hands, whereas an absent price means the filer
             # pointed at a footnote instead of giving a number.
             price_node = node.find("transactionAmounts/transactionPricePerShare")
             price_value = _text(price_node, "value")
@@ -516,7 +517,7 @@ def parse_form4(xml_text: str, enum_row: dict) -> ParseResult:
         else:
             result.warnings.append(
                 f"{accession}: no transactions or holdings found "
-                f"and notSubjectToSection16 is not set — investigate"
+                f"and notSubjectToSection16 is not set; investigate"
             )
 
     return result

@@ -1,9 +1,9 @@
 """Download raw Form 4 XML documents, with an on-disk cache.
 
-Separated from parsing on purpose. Fetching is slow, rate-limited, and can
+Kept separate from parsing. Fetching is slow, rate-limited, and can
 fail; parsing is fast, deterministic, and is what you'll iterate on. Keeping
 the raw XML on disk means you can rewrite the parser twenty times without
-re-hitting the SEC even once — which is both faster for you and the polite
+re-hitting the SEC even once, which is both faster for you and the polite
 thing to do.
 """
 
@@ -89,7 +89,7 @@ def fetch_all(
             cached += 1
         else:
             downloaded += 1
-            # Only log progress for real network activity — a fully cached run
+            # Only log progress for real network activity, since a fully cached run
             # would otherwise spam hundreds of lines.
             if downloaded % 50 == 0:
                 log.info("Downloaded %d filings (%d/%d processed)", downloaded, i, len(filings))

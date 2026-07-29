@@ -20,7 +20,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 DATA_DIR = PROJECT_ROOT / "data"
 CACHE_DIR = DATA_DIR / "cache"      # downloaded artifacts we don't want to re-fetch
 RAW_DIR = DATA_DIR / "raw"          # scraper output, pre-cleaning
-PROCESSED_DIR = DATA_DIR / "processed"  # (unused for now — step 3 of the project)
+PROCESSED_DIR = DATA_DIR / "processed"  # parsed records and the analysis report
 CONFIG_DIR = PROJECT_ROOT / "config"
 
 TICKERS_FILE = CONFIG_DIR / "tickers.txt"
@@ -54,7 +54,7 @@ REQUEST_TIMEOUT_SECONDS = 30
 # How far back to look for filings, unless overridden on the command line.
 DEFAULT_LOOKBACK_MONTHS = 12
 
-# Form types we care about. "4/A" is an amended Form 4 — insiders file these to
+# Form types we care about. "4/A" is an amended Form 4. Insiders file these to
 # correct earlier reports, so they matter, but you want them labelled.
 FORM_4_TYPES = ("4", "4/A")
 

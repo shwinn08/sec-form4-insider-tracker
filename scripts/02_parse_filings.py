@@ -5,7 +5,7 @@ Reads the newest enumeration output from step 1, downloads each filing's raw
 XML (cached on disk), parses it, and writes flattened transactions to
 data/processed/.
 
-Does NOT touch a database — that's step 3.
+Does NOT touch a database. That's step 3.
 
 Usage:
     python scripts/02_parse_filings.py

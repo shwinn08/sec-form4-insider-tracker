@@ -61,7 +61,7 @@ class SECClient:
         self.session = requests.Session()
         self.session.headers.update(
             {
-                # THE important header. The SEC's fair-access policy requires
+                # The header that matters. The SEC's fair-access policy requires
                 # automated traffic to identify a real contact. Without it you
                 # get a 403 block page; abuse gets your IP banned outright.
                 "User-Agent": self.user_agent,
@@ -99,7 +99,7 @@ class SECClient:
                         f"HTTP {response.status_code} for {url}"
                     )
                     log.warning(
-                        "HTTP %s from %s — backing off", response.status_code, url
+                        "HTTP %s from %s, backing off", response.status_code, url
                     )
                 elif response.status_code == 403:
                     # Almost always a User-Agent problem. Retrying won't help,
@@ -111,8 +111,8 @@ class SECClient:
                         "User-Agent containing a real contact email."
                     )
                 elif response.status_code == 404:
-                    # Also not retryable — usually a malformed CIK (wrong
-                    # zero-padding) or a genuinely nonexistent resource.
+                    # Also not retryable. Usually a malformed CIK (wrong
+                    # zero-padding) or a resource that does not exist.
                     response.raise_for_status()
                 else:
                     response.raise_for_status()

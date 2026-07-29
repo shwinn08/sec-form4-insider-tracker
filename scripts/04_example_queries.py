@@ -26,7 +26,7 @@ QUERIES: list[tuple[str, str, str]] = [
         "Net open-market insider activity by company",
         # Only P and S are real trades. Joining transaction_codes and filtering
         # on is_open_market keeps grants (A), tax withholding (F) and option
-        # exercises (M) out of a "buying vs selling" number — those are
+        # exercises (M) out of a "buying vs selling" number. Those are
         # compensation mechanics, not investment decisions.
         #
         # Grouped on issuer_name (from the XML <issuer> block), never on the
@@ -52,10 +52,10 @@ QUERIES: list[tuple[str, str, str]] = [
     (
         "Most active insiders (transactions they are named on)",
         # Owners are reached by joining through filing_owners, because a
-        # transaction belongs to a FILING and a filing can name several
-        # insiders. This counts transactions an owner is named on — for the 12
+        # transaction belongs to a filing, and a filing can name several
+        # insiders. This counts transactions an owner is named on. For the 12
         # joint filings that means both owners are credited, which is correct
-        # for "activity" but would NOT be correct for summing shares.
+        # for "activity" but would not be correct for summing shares.
         """
         SELECT
             o.owner_name,
@@ -74,7 +74,7 @@ QUERIES: list[tuple[str, str, str]] = [
         ORDER BY txn_count DESC
         LIMIT 10
         """,
-        "Owners joined via filing_owners — no owner column exists on transactions.",
+        "Owners joined via filing_owners; no owner column exists on transactions.",
     ),
     (
         "What was actually traded under the FWONK ticker",
@@ -97,7 +97,7 @@ QUERIES: list[tuple[str, str, str]] = [
         ORDER BY txns DESC
         LIMIT 12
         """,
-        "One ticker -> 19 securities across 3 issuers.",
+        "One ticker -> 20 securities across 3 issuers.",
     ),
     (
         "Filings surfaced under one ticker but issued by another company",
@@ -118,7 +118,7 @@ QUERIES: list[tuple[str, str, str]] = [
         "These would be misattributed if the schema keyed on ticker.",
     ),
     (
-        "Price disclosed vs genuinely zero, by transaction code",
+        "Price undisclosed vs zero, by transaction code",
         # NULL and 0 are different facts and the schema keeps them apart.
         """
         SELECT
@@ -137,7 +137,7 @@ QUERIES: list[tuple[str, str, str]] = [
         "NULL = not disclosed; 0 = no cash changed hands. Never conflated.",
     ),
     (
-        "Current positions — the correct read of shares_owned_following",
+        "Current positions: the correct read of shares_owned_following",
         # Latest row per (owner, security, ownership form), never a SUM.
         """
         SELECT

@@ -4,7 +4,7 @@
 Resolves tickers -> CIKs, lists each company's Form 4 filings from the last N
 months, and writes the results to data/raw/ as JSON and CSV.
 
-Does NOT download or parse filing content — that's the next step.
+Does NOT download or parse filing content. That's the next step.
 
 Usage:
     python scripts/01_enumerate_filings.py
@@ -127,7 +127,7 @@ def main() -> int:
     print("-" * 62)
     print(f"  {'TOTAL':<6} {len(all_filings):>4} filings")
     if empty_notes:
-        # A zero is ambiguous on its own — always say which kind it was.
+        # A zero is ambiguous on its own, so always say which kind it was.
         print("\n  Empty results:")
         for ticker, note in empty_notes.items():
             print(f"    {ticker}: {note}")

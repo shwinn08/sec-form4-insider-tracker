@@ -25,7 +25,7 @@ PRAGMA foreign_keys = ON;
 -- Keyed on CIK rather than ticker because a ticker is not a stable identifier:
 -- it is reassigned to a new legal entity after a reorganisation (XOM moved to a
 -- new holdco while its filing history stayed with the predecessor). There is
--- deliberately no ticker column — one company can have several (tracking
+-- no ticker column, since one company can have several (tracking
 -- stocks) and the mapping changes over time.
 -- ---------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS companies (
@@ -37,10 +37,10 @@ CREATE TABLE IF NOT EXISTS companies (
 -- ---------------------------------------------------------------------------
 -- filings: one row per Form 4 document.
 --
--- FINDING: EDGAR indexes a Form 4 under BOTH the issuer and the reporting
+-- FINDING: EDGAR indexes a Form 4 under both the issuer and the reporting
 -- owner, so a company's filing feed returns filings about other companies
 -- (JPMorgan's feed carries BlackRock fund filings). Three CIKs are recorded and
--- only one of them — issuer_cik, taken from the XML <issuer> block — is
+-- only one of them (issuer_cik, taken from the XML <issuer> block) is
 -- foreign-keyed to companies. searched_cik is provenance, never identity.
 -- filer_agent_cik (from the accession prefix) is the transmitting agent and is
 -- intentionally not a foreign key, because agents are not issuers.
@@ -74,7 +74,7 @@ CREATE TABLE IF NOT EXISTS filings (
 -- and the padding is how it appears everywhere else in EDGAR. Storing it as an
 -- integer strips the zeros and forces reconstruction on every join.
 --
--- Roles are NOT stored here — see filing_owners.
+-- Roles are not stored here. See filing_owners.
 -- ---------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS reporting_owners (
     owner_cik   TEXT PRIMARY KEY,
@@ -86,7 +86,7 @@ CREATE TABLE IF NOT EXISTS reporting_owners (
 -- filing_owners: the many-to-many between filings and insiders.
 --
 -- FINDING: 12 filings name two reporting owners, and a joint filing reports
--- each transaction ONCE, COLLECTIVELY — not once per owner. Attaching an owner
+-- each transaction once, collectively, not once per owner. Attaching an owner
 -- column to `transactions` would make a naive join double the share counts.
 -- Instead transactions carry no owner at all: they belong to a filing, and the
 -- filing has N owners. Summing shares per insider therefore requires joining
@@ -121,12 +121,12 @@ CREATE TABLE IF NOT EXISTS filing_owners (
 -- securities: what was actually traded.
 --
 -- FINDING: a ticker identifies a company, not an instrument. Liberty Media
--- alone issues 19 distinct securities across its tracking stocks, and the XML's
+-- alone issues 14 distinct securities across its tracking stocks, and the XML's
 -- own issuerTradingSymbol field reads 'FWONK' on rows that are actually Liberty
--- Live stock — wrong 83% of the time. security_title from the transaction row
+-- Live stock, wrong 83% of the time. security_title from the transaction row
 -- is the only reliable identifier.
 --
--- There is deliberately NO ticker and NO issuer_trading_symbol column anywhere
+-- There is no ticker and no issuer_trading_symbol column anywhere
 -- in this schema. Removing the misleading field entirely is safer than storing
 -- one that people will reach for by reflex.
 --
@@ -149,10 +149,10 @@ CREATE TABLE IF NOT EXISTS securities (
 -- security differently. NVIDIA common stock is filed as both 'Common Stock'
 -- (413 transactions) and 'Common' (153), so per-security aggregates undercount.
 --
--- This is deliberately a CURATED table, not a normalisation rule. A string
+-- This is a curated table rather than a normalisation rule. A string
 -- heuristic that collapsed 'Common' into 'Common Stock' would, applied
 -- consistently, also merge Liberty Media's 'Series C Common Stock' with
--- 'Series C Liberty Live Common Stock' — genuinely different securities.
+-- 'Series C Liberty Live Common Stock', which are different securities.
 -- Silently merging distinct instruments is worse than the duplication it fixes,
 -- so every row here was reviewed individually and carries its justification.
 --
@@ -201,7 +201,7 @@ LEFT JOIN securities       cs ON cs.security_id = a.canonical_security_id;
 --
 -- Making this a table rather than a CHECK constraint means an analyst who has
 -- never read a Form 4 can write `WHERE is_open_market = 1` without first
--- learning the conventions — and an unrecognised code fails the insert instead
+-- learning the conventions, and an unrecognised code fails the insert instead
 -- of quietly landing in an aggregate.
 -- ---------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS transaction_codes (
@@ -215,7 +215,7 @@ CREATE TABLE IF NOT EXISTS transaction_codes (
 -- transactions: one row per reported transaction line.
 --
 -- FINDING: 164 filings contain repeated (security_title, transaction_date,
--- transaction_code) triples — genuinely separate tranches or price points, not
+-- transaction_code) triples, which are separate tranches or price points, not
 -- duplicates. line_number is the only thing that distinguishes them, which is
 -- why it is part of the primary key. Without it a dedup would silently discard
 -- real transactions.
@@ -228,11 +228,11 @@ CREATE TABLE IF NOT EXISTS transaction_codes (
 -- the average toward zero. The CHECK guards against an empty string sneaking in
 -- as an ambiguous third state.
 --
--- FINDING: 269 share counts are genuinely fractional (401k / dividend
+-- FINDING: 269 share counts are fractional (401k / dividend
 -- reinvestment plans). These columns are TEXT to preserve the exact decimal as
 -- filed; an INTEGER column truncates and a REAL column rounds.
 --
--- Note there is no owner column here — see filing_owners.
+-- Note there is no owner column here. See filing_owners.
 -- ---------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS transactions (
     accession_number             TEXT    NOT NULL REFERENCES filings(accession_number)
@@ -277,11 +277,11 @@ CREATE TABLE IF NOT EXISTS transactions (
 -- They state a position the insider holds but did not trade. 807 of them exist
 -- in this corpus.
 --
--- The important thing about this table is what it LACKS. There is no
+-- What matters about this table is what it leaves out. There is no
 -- transaction_date, transaction_code, shares or price_per_share column, because
 -- those facts do not exist in the source. Forcing holdings into `transactions`
 -- would create 807 rows with four permanently-NULL columns that every future
--- query has to remember to exclude — and eventually one won't.
+-- query has to remember to exclude, and eventually one won't.
 -- ---------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS holdings (
     accession_number        TEXT    NOT NULL REFERENCES filings(accession_number)
@@ -334,7 +334,7 @@ SELECT
     f.issuer_matches_searched,
     c.cik                                   AS issuer_cik,
     c.name                                  AS issuer_name,
-    -- Both are exposed on purpose: security_title is what the filer wrote,
+    -- Both are exposed: security_title is what the filer wrote,
     -- canonical_security_title is what it means. Any aggregate built on the
     -- canonical value can be audited against the raw one.
     s.security_title,
@@ -372,19 +372,19 @@ LEFT JOIN securities   us ON us.security_id    = t.underlying_security_id;
 -- v_current_positions: the correct read of shares_owned_following.
 --
 -- FINDING: shares_owned_following is a running balance after a specific
--- transaction line, for a specific ownership form — not a position. One filing
+-- transaction line, for a specific ownership form, not a position. One filing
 -- showed 230,278 (direct), 224,619 (direct) and 135,027 (indirect) for the same
 -- security: the first two are successive states of one pool, the third is a
 -- different pool entirely. Summing them produces a number corresponding to
 -- nothing.
 --
--- The correct read is the LATEST row per (owner, security, ownership form).
+-- The correct read is the latest row per (owner, security, ownership form).
 -- This view does that with a window function, drawing on both transactions and
 -- holdings, since a position can be last stated by either.
 --
 -- Rows are attributed per owner via filing_owners, so a joint filing yields a
 -- position row for each named owner. That is an attribution choice, not a fact
--- in the source — treat multi-owner positions accordingly.
+-- in the source, so treat multi-owner positions accordingly.
 -- ---------------------------------------------------------------------------
 CREATE VIEW IF NOT EXISTS v_current_positions AS
 WITH stated AS (
